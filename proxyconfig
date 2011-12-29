@@ -1,0 +1,131 @@
+#!/bin/bash
+#Script para configurar, activar y desactivar la autenticación
+#de proxy ISA usando el programa cntlm.
+#Escrito por: Jorge Catumba, jorgerev90 at gmail.com
+
+#Verificando que el usuario es root
+if [ $UID -ne 0 ]; then
+  echo "Necesitas ser usuario root (sudo su) para ejecutar este script"
+  exit
+fi
+
+#Verificando la instalacion de cntlm
+if [ ! -e "/etc/init.d/cntlm" ]; then
+  echo "No se ha instalado cntlm apropiadamente."
+  exit
+fi
+
+#Verificando el comando dado por el usuario
+if [ -z "$1" ]; then
+  echo "Debes dar un comando"
+  echo "uso: $0 a - Para configurar y activar el proxy de la red."
+  echo "     $0 d - Para desactivar el proxy de la red."
+  exit
+else
+  COM=$1
+fi
+
+#Función de configuración
+function config {
+#Leyendo la entrada de usuario
+  echo "Introduce el nombre de usuario (en caso de necesitar autenticación):"
+  read USUARIO
+  echo "Introduce el dominio (en caso de necesitar autenticación):"
+  read DOMINIO
+  echo "Introduce la contraseña (en caso de necesitar autenticación):"
+  read PASSWORD
+  echo "Introduce el nombre del proxy:"
+  read SERVER
+  echo "Introduce el puerto del proxy:"
+  read PROXYPORT
+#Modificando /etc/cntlm.conf
+  LINEA=$(grep -n Username /etc/cntlm.conf | sed s/:.*//)
+  sed -i "$LINEA"s/^.*/Username\\t"$USUARIO"/ /etc/cntlm.conf
+  LINEA=$(grep -n Domain /etc/cntlm.conf | sed s/:.*//)
+  sed -i "$LINEA"s/^.*/Domain\\t"$DOMINIO"/ /etc/cntlm.conf
+  LINEA=$(grep -n Password /etc/cntlm.conf | sed s/:.*//)
+  sed -i "$LINEA"s/^.*/Password\\t"$PASSWORD"/ /etc/cntlm.conf
+  LINEA=$(grep -n ^Proxy /etc/cntlm.conf | sed s/:.*//)
+  sed -i "$LINEA"s/^.*/Proxy\\t"$SERVER:$PROXYPORT"/ /etc/cntlm.conf
+  if [ "$(grep "#ISAScannerAgent" /etc/cntlm.conf | grep Wget/)" != "" ]; then
+  sed -i s/^#ISAScannerAgent\ *Wget"\/"/ISAScannerAgent\\t Wget"\/"/ /etc/cntlm.conf
+  fi
+  if [ "$(grep "#ISAScannerAgent" /etc/cntlm.conf | grep APT-HTTP/)" != "" ]; then
+  sed -i s/^#ISAScannerAgent\ *APT-HTTP"\/"/ISAScannerAgent\\t APT-HTTP"\/"/ /etc/cntlm.conf
+  fi
+  LISTENPORT=$(grep Listen /etc/cntlm.conf | sed "s/Listen\\t*//")
+#Modificando /etc/apt/apt.conf
+  if [ "$(grep 'Acquire' /etc/apt/apt.conf)" != "" ]; then
+    sed -i '/Acquire/d' /etc/apt/apt.conf
+  fi
+    echo "Acquire::http::proxy \"http://localhost:$LISTENPORT/\";" >> /etc/apt/apt.conf
+    echo "Acquire::ftp::proxy \"ftp://localhost:$LISTENPORT/\";" >> /etc/apt/apt.conf
+    echo "Acquire::https::proxy \"https://localhost:$LISTENPORT/\";" >> /etc/apt/apt.conf
+#Modificando /etc/apt/apt.conf.d/proxy
+  if [ "$(grep 'Acquire' /etc/apt/apt.conf.d/proxy)" != "" ]; then
+    sed -i '/Acquire/d' /etc/apt/apt.conf.d/proxy
+  fi
+    echo "Acquire::http::proxy \"http://localhost:$LISTENPORT/\";" >> /etc/apt/apt.conf.d/proxy
+    echo "Acquire::ftp::proxy \"ftp://localhost:$LISTENPORT/\";" >> /etc/apt/apt.conf.d/proxy
+    echo "Acquire::https::proxy \"https://localhost:$LISTENPORT/\";" >> /etc/apt/apt.conf.d/proxy
+#Modificando /etc/bash.bashrc
+  if [ "$(grep '_proxy=' /etc/bash.bashrc)" != "" ]; then
+    sed -i '/_proxy=/d' /etc/bash.bashrc
+  fi
+    echo "export http_proxy=http://localhost:$LISTENPORT/" >> /etc/bash.bashrc
+    echo "export ftp_proxy=http://localhost:$LISTENPORT/" >> /etc/bash.bashrc
+    echo "export https_proxy=http://localhost:$LISTENPORT/" >> /etc/bash.bashrc
+#Modificando /etc/environment
+  if [ "$(grep '_proxy=' /etc/environment)" != "" ]; then
+    sed -i '/_proxy=/d' /etc/environment
+  fi
+    echo "http_proxy=http://localhost:$LISTENPORT/" >> /etc/environment
+    echo "ftp_proxy=ftp://localhost:$LISTENPORT/" >> /etc/environment
+    echo "https_proxy=https://localhost:$LISTENPORT/" >> /etc/environment
+#Modificando /etc/profile
+  if [ "$USUARIO" != "" ]; then
+    USUARIO=$USUARIO":"
+  fi
+  if [ "$DOMINIO" != "" ]; then
+    DOMINIO=$DOMINIO'\'
+  fi
+  if [ "$PASSWORD" != "" ]; then
+    PASSWORD=$PASSWORD"@"
+  fi
+  if [ "$(grep '_proxy=' /etc/profile)" != "" ]; then
+    sed -i '/_proxy=/d' /etc/profile
+  fi
+    echo "set http_proxy=http://$DOMINIO$USUARIO$PASSWORD$SERVER:$PROXYPORT" >> /etc/profile
+    echo "set ftp_proxy=http://$DOMINIO$USUARIO$PASSWORD$SERVER:$PROXYPORT" >> /etc/profile
+    echo "set https_proxy=http://$DOMINIO$USUARIO$PASSWORD$SERVER:$PROXYPORT" >> /etc/profile
+}
+
+#Control general
+case $COM in
+    a ) echo "Preparando para configurar..."
+	/etc/init.d/cntlm stop
+        config
+        echo "Preparando para activar..."
+        /etc/init.d/cntlm start
+        ;;
+    d ) echo "Preparando para desactivar..."
+        /etc/init.d/cntlm stop
+        if [ "$(grep 'Acquire' /etc/apt/apt.conf)" != "" ]; then
+          sed -i '/Acquire/d' /etc/apt/apt.conf
+        fi
+        if [ "$(grep 'Acquire' /etc/apt/apt.conf.d/proxy)" != "" ]; then
+          sed -i '/Acquire/d' /etc/apt/apt.conf.d/proxy
+        fi
+        if [ "$(grep '_proxy=' /etc/bash.bashrc)" != "" ]; then
+	  sed -i '/_proxy=/d' /etc/bash.bashrc
+	fi
+	if [ "$(grep '_proxy=' /etc/environment)" != "" ]; then
+	  sed -i '/_proxy=/d' /etc/environment
+	fi
+	if [ "$(grep '_proxy=' /etc/profile)" != "" ]; then
+	  sed -i '/_proxy=/d' /etc/profile
+	fi
+        ;;
+    * ) echo "Comando no válido"
+        ;;
+esac
